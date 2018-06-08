@@ -76,6 +76,12 @@ assert(T == hiredis.status.string)
 
 --------------------------------------------------------------------------------
 
+local res, err = hiredis.unwrap_reply(nil, "err")
+assert(res == nil)
+assert(err == "err")
+
+--------------------------------------------------------------------------------
+
 local NIL = assert(conn:command("GET", "BADKEY"))
 assert(NIL == hiredis.NIL)
 
@@ -201,8 +207,10 @@ local res = assert(
 
 assert(type(res) == "table")
 assert(#res == 2)
-assert(res[1] == "A")
-assert(res[2] == "B")
+assert(
+    (res[1] == "A" and res[2] == "B") or
+    (res[1] == "B" and res[2] == "A")
+  )
 
 --------------------------------------------------------------------------------
 
@@ -218,8 +226,10 @@ assert(type(res) == "table")
 assert(#res == 5)
 local res2 = res[5]
 assert(type(res2) == "table")
-assert(res2[1] == "A")
-assert(res2[2] == "B")
+assert(
+    (res2[1] == "A" and res2[2] == "B") or
+    (res2[1] == "B" and res2[2] == "A")
+  )
 
 --------------------------------------------------------------------------------
 
@@ -243,8 +253,81 @@ assert(type(res) == "table")
 assert(#res == 5)
 local res2 = res[5]
 assert(type(res2) == "table")
-assert(res2[1] == "A")
-assert(res2[2] == "B")
+assert(
+    (res2[1] == "A" and res2[2] == "B") or
+    (res2[1] == "B" and res2[2] == "A")
+  )
+
+--------------------------------------------------------------------------------
+
+do
+  local info = assert(hiredis.unwrap_reply(conn:command("INFO")))
+  local major, minor = info:find("redis_version:%s*(%d+)%.(%d+)")
+  if not major or not minor then
+    error("can't determine Redis version from INFO command")
+  elseif tonumber(major) < 2 or tonumber(minor) < 6 then
+    print("Redis version <2.6, skipping nested bulk test")
+  else
+    -- Based on a real bug scenario:
+    -- https://github.com/agladysh/lua-hiredis/issues/2
+    -- Note that hiredis C library has built in limitation
+    -- on bulk reply nesting.
+    do
+      local r = assert(
+          hiredis.unwrap_reply(
+              conn:command(
+                  "EVAL",
+                  [[return { 1, { 2, { 3 }, 4 }, 5 }]],
+                  0
+                )
+            )
+        )
+      assert(type(r) == "table")
+      assert(r[1] == 1)
+      assert(r[2][1] == 2)
+      assert(r[2][2][1] == 3)
+      assert(r[2][3] == 4)
+      assert(r[3] == 5)
+    end
+
+    do
+      local r = assert(
+          hiredis.unwrap_reply(
+              conn:command(
+                  "EVAL",
+                  [[return { 1, { 2, { 3, { 4 }, 5 }, 6 }, 7 }]],
+                  0
+                )
+            )
+        )
+      assert(type(r) == "table")
+      assert(r[1] == 1)
+      assert(r[2][1] == 2)
+      assert(r[2][2][1] == 3)
+      assert(r[2][2][2][1] == 4)
+      assert(r[2][2][3] == 5)
+      assert(r[2][3] == 6)
+      assert(r[3] == 7)
+    end
+
+    do
+      local res, err = hiredis.unwrap_reply(
+          conn:command(
+              "EVAL",
+              [[
+                return
+                  { 1, { 2, { 3, { 4, { 5, { 6, { 7, { 8, {
+                  9
+                  }, 8 }, 7 }, 6 }, 5 }, 4 }, 3 }, 2 }, 1 }
+              ]],
+              0
+            )
+        )
+      assert(res == nil)
+      assert(err == "No support for nested multi bulk replies with depth > 7")
+    end
+  end
+end
 
 --------------------------------------------------------------------------------
 
