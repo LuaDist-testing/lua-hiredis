@@ -1,16 +1,16 @@
 -- This file was automatically generated for the LuaDist project.
 
 package = "lua-hiredis"
-version = "0.1.2-1"
+version = "0.2-1"
 -- LuaDist source
 source = {
-  tag = "0.1.2-1",
+  tag = "0.2-1",
   url = "git://github.com/LuaDist-testing/lua-hiredis.git"
 }
 -- Original source
 -- source = {
 --    url = "git://github.com/agladysh/lua-hiredis.git",
---    branch = "v0.1.2"
+--    branch = "v0.2"
 -- }
 description = {
    summary = "Bindings for hiredis Redis-client library",

@@ -22,12 +22,13 @@ extern "C" {
   #define SPAM(a) (void)0
 #endif
 
-#define LUAHIREDIS_VERSION     "lua-hiredis 0.1.1"
-#define LUAHIREDIS_COPYRIGHT   "Copyright (C) 2011, lua-hiredis authors"
+#define LUAHIREDIS_VERSION     "lua-hiredis 0.2"
+#define LUAHIREDIS_COPYRIGHT   "Copyright (C) 2011—2012, lua-hiredis authors"
 #define LUAHIREDIS_DESCRIPTION "Bindings for hiredis Redis-client library"
 
-#define LUAHIREDIS_CONN_MT "lua-hiredis.connection"
-#define LUAHIREDIS_CONST_MT "lua-hiredis.const"
+#define LUAHIREDIS_CONN_MT   "lua-hiredis.connection"
+#define LUAHIREDIS_CONST_MT  "lua-hiredis.const"
+#define LUAHIREDIS_STATUS_MT "lua-hiredis.status"
 
 #define LUAHIREDIS_MAXARGS (256)
 
@@ -109,6 +110,32 @@ static int push_new_const(
 
   return 1;
 }
+
+static int lstatus_index(lua_State * L)
+{
+  size_t key_len = 0;
+  const char * key = NULL;
+  luaL_checktype(L, 1, LUA_TTABLE);
+  key = luaL_checklstring(L, 2, &key_len);
+
+  push_new_const(
+      L, key, key_len, REDIS_REPLY_STATUS /* status */
+    );
+  lua_rawset(L, 1); /* t[key] = status */
+
+  lua_pushlstring(L, key, key_len); /* Push the key again */
+  lua_gettable(L, 1); /* return t[key] */
+
+  return 1;
+}
+
+/* status API */
+static const struct luaL_reg STATUS_MT[] =
+{
+  { "__index", lstatus_index },
+
+  { NULL, NULL }
+};
 
 static const struct luahiredis_Enum Errors[] =
 {
@@ -215,43 +242,17 @@ static int load_args(
 
 static int push_reply(lua_State * L, redisReply * pReply)
 {
-  /* int base = lua_gettop(L); */
-
-  switch(pReply->type)
+  switch (pReply->type)
   {
     case REDIS_REPLY_STATUS:
       lua_pushvalue(L, lua_upvalueindex(1)); /* M (module table) */
+      lua_getfield(L, -1, "status"); /* status = M.status */
+      lua_remove(L, -2); /* Remove module table from stack */
 
-      lua_pushlstring(L, pReply->str, pReply->len); /* status */
-      lua_gettable(L, -2); /* M[status] */
+      lua_pushlstring(L, pReply->str, pReply->len); /* name */
+      lua_gettable(L, -2); /* status[name] */
 
-      if (lua_isnil(L, -1)) /* Not bothering with metatables */
-      {
-        /*
-        * TODO: Following code is likely to be broken due to early binding
-        * (imagine that RETURN is a command that returns given string
-        * as a status):
-        *
-        *    assert(conn:command("RETURN", "FOO") == hiredis.FOO)
-        *
-        * Here hiredis.FOO would be nil before conn:command() is called.
-        *
-        * Note that this is not relevant to the current Redis implementation
-        * (that is 2.2 and before), since it seems that it wouldn't
-        * return any status code except OK, QUEUED or PONG,
-        * all of which are alread covered.
-        */
-        lua_pushlstring(L, pReply->str, pReply->len); /* status */
-        push_new_const(
-            L, pReply->str, pReply->len, REDIS_REPLY_STATUS /* const */
-          );
-        lua_settable(L, -3); /* M[status] = const */
-
-        lua_pushlstring(L, pReply->str, pReply->len); /* status */
-        lua_gettable(L, -2); /* return M[status] */
-      }
-
-      lua_remove(L, -2); /* Remove module table */
+      lua_remove(L, -2); /* Remove status table from stack */
 
       break;
 
@@ -297,13 +298,6 @@ static int push_reply(lua_State * L, redisReply * pReply)
     default: /* should not happen */
       return luaL_error(L, "command: unknown reply type: %d", pReply->type);
   }
-
-  /*
-  if (lua_gettop(L) != base + 1)
-  {
-    return luaL_error(L, "pushreplystackerror: actual %d expected %d base %d type %d", lua_gettop(L), base + 1, base, pReply->type);
-  }
-  */
 
   /*
   * Always returning a single value.
@@ -358,7 +352,6 @@ static int lconn_append_command(lua_State * L)
 static int lconn_get_reply(lua_State * L)
 {
   redisContext * pContext = check_connection(L, 1);
-  /* int base = lua_gettop(L); */
 
   int nret = 0;
 
@@ -371,28 +364,7 @@ static int lconn_get_reply(lua_State * L)
     return push_error(L, pContext);
   }
 
-  /*
-  if (lua_gettop(L) != base)
-  {
-    freeReplyObject(pReply);
-    return luaL_error(
-        L, "lhrstackerror1 actual %d expected %d", lua_gettop(L), base
-      );
-  }
-  */
-
   nret = push_reply(L, pReply);
-
-  /*
-  if (lua_gettop(L) != base + nret)
-  {
-    freeReplyObject(pReply);
-    return luaL_error(
-        L, "lhrstackerror2 actual %d expected %d base %d", lua_gettop(L),
-        base + nret, base
-      );
-  }
-  */
 
   /*
   * TODO: Not entirely safe: if above code throws error, reply object is leaked.
@@ -422,7 +394,7 @@ static int lconn_close(lua_State * L)
 
 static int lconn_tostring(lua_State * L)
 {
-  /* redisContext * pContext = */check_connection(L, 1);
+  check_connection(L, 1);
 
   /* TODO: Provide more information? */
   lua_pushliteral(L, "lua-hiredis.connection");
@@ -615,14 +587,24 @@ LUALIB_API int luaopen_hiredis(lua_State * L)
   push_new_const(L, "NIL", 3, REDIS_REPLY_NIL);
   lua_setfield(L, -2, LUAHIREDIS_KEY_NIL);
 
-  push_new_const(L, "OK", 2, REDIS_REPLY_STATUS);
-  lua_setfield(L, -2, "OK");
+  lua_newtable(L); /* status */
 
-  push_new_const(L, "QUEUED", 6, REDIS_REPLY_STATUS);
-  lua_setfield(L, -2, "QUEUED");
+  if (luaL_newmetatable(L, LUAHIREDIS_STATUS_MT))
+  {
+    luaL_register(L, NULL, STATUS_MT);
+    lua_pushliteral(L, LUAHIREDIS_STATUS_MT);
+    lua_setfield(L, -2, "__metatable");
+  }
+  lua_setmetatable(L, -2);
 
-  push_new_const(L, "PONG", 4, REDIS_REPLY_STATUS);
-  lua_setfield(L, -2, "PONG");
+  lua_getfield(L, -1, "OK");
+  lua_setfield(L, -3, "OK");     /* hiredis.OK = status.OK */
+  lua_getfield(L, -1, "QUEUED");
+  lua_setfield(L, -3, "QUEUED"); /* hiredis.QUEUED = status.QUEUED */
+  lua_getfield(L, -1, "PONG");
+  lua_setfield(L, -3, "PONG");   /* hiredis.PONG = status.PONG */
+
+  lua_setfield(L, -2, "status"); /* hiredis.status = status */
 
   /*
   * Register functions
