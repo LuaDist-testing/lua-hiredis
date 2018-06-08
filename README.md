@@ -17,11 +17,15 @@ API
   * Returns `reply` itself otherwise
     (note that `hiredis.REPLY_NIL` object is not unwrapped).
 
+### Connection
+
 * `conn:command(... : string) : reply / nil, err, error_code`
 
 * `conn:append_command(... : string) : (nothing)`
 
 * `conn:get_reply() : reply / nil, err, error_code`
+
+* `conn:close() : (nothing)`
 
 ### Error-code
 
@@ -42,11 +46,14 @@ Hiredis error codes (see docs), also available as `hiredis.ERR_<something>`:
   * `hiredis.QUEUED`
   * `hiredis.PONG`
 
+  It is guaranteed that these object instances are always used
+  for their corresponding statuses (so you can make a simple equality check).
+
 * `REDIS_REPLY_ERROR` is a const-object with type `hiredis.REPLY_ERROR`.
   Note that Redis server errors are returned as `REDIS_REPLY_ERROR` values,
   not as `nil, err, error_code` triplet. See tests for example.
 
-* `REDIS_REPLY_INTEGER` is a Lua value of type `hiredis.REPLY_NUMBER`.
+* `REDIS_REPLY_INTEGER` is a Lua number.
 
 * `REDIS_REPLY_NIL` is a const-object with type `hiredis.REPLY_NIL`.
 
@@ -60,7 +67,7 @@ Const-object is a table with fields `name` and `type`.
 
 There are three types of const-objects:
 
-  * `hiredis.REPLY_NIL`
+  * `hiredis.REPLY_NIL` (only a single instance is ever used: `hiredis.NIL`)
   * `hiredis.REPLY_ERROR`
   * `hiredis.REPLY_STATUS`
 
